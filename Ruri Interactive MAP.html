@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>R.I.MAP with Splash Screen</title>
+  <style>
+    /* 1) Full-screen splash with instructions */
+    #startScreen {
+      position: fixed; /* Cover entire viewport */
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(255, 255, 255, 0.95); /* White-ish background */
+      color: #333; 
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999; /* On top of everything */
+      text-align: center;
+      font-family: sans-serif;
+    }
+    #startScreen h1 {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+    }
+    #startScreen p {
+      margin: 0.5rem 0;
+      font-size: 1rem;
+    }
+    #startScreen .note {
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    /* 2) Responsive map container */
+    #mapContainer {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: url("SateliteMap.jpg") no-repeat center center;
+      background-size: cover;
+      cursor: default;
+      overflow: hidden;
+      /* Will be behind #startScreen initially */
+    }
+
+    /* 3) We'll do brightness-based darkening on #mapContainer directly */
+    /* .darkened { filter: brightness(0%); } -- not strictly necessary to define here */
+
+    /* 4) "Fake" pointer image: a PNG with transparency, scaled in relative terms. */
+    #pointerImage {
+      position: absolute;
+      width: 2%; 
+      height: auto;
+      transform: translate(-50%, -50%);
+    }
+  </style>
+</head>
+<body>
+
+<!-- The "front page" / splash screen -->
+<div id="startScreen">
+  <h1>Welcome to R.I.MAP!!</h1>
+  <p>This is an interactive map game.</p>
+  <p>Use your mouse OR arrow keys to move the pointer around.</p>
+  <p>The map will darken as you approach darker zones!</p>
+  <p> </p>
+  <p>Press any key or click anywhere to begin...</p>
+  <p> </p>
+  <p> </p>
+  <p> </p>
+  <p> </p>
+  <p> </p>
+  <p class="note"> studio_imaginaire / ruri_ref / culture_moves / 2025 </p>
+</div>
+
+<!-- The main map container (initially under the splash) -->
+<div id="mapContainer">
+  <img id="pointerImage" src="Ref.png" alt="Pointer Icon">
+</div>
+
+<script>
+  /**********************************************************
+   * (A) Splash Screen Logic
+   **********************************************************/
+  const startScreen = document.getElementById("startScreen");
+  function hideStartScreen() {
+    startScreen.style.display = "none"; 
+    // Optionally, we can remove it from the DOM:
+    // startScreen.remove(); 
+    // Then game is fully visible.
+  }
+  // Hide splash on click anywhere in #startScreen
+  startScreen.addEventListener("click", hideStartScreen);
+  // Also hide on any key press
+  document.addEventListener("keydown", (e) => {
+    // Ensure we only do this if startScreen is visible
+    if (startScreen.style.display !== "none") {
+      hideStartScreen();
+    }
+  });
+
+  /**********************************************************
+   * (B) Original Map Dimensions
+   * We need these so we can scale the polygons properly.
+   **********************************************************/
+  const originalWidth = 2348;  // The original width of SateliteMap.jpg
+  const originalHeight = 1664; // The original height
+
+  /**********************************************************
+   * (C) Polygons in original scale
+   **********************************************************/
+  const polygon1 = [
+    [464,923],[364,1350],[747,1425],[976,1354],[1112,1232],
+    [1129,1336],[1282,1291],[1391,1176],[1628,925],[1722,933],
+    [1754,863],[1405,828],[1093,859],[696,961],[360,901],[269,1327]
+  ];
+  // Example 2nd polygon
+  const polygon2 = [
+    [1000,400],[1200,400],[1200,600],[1000,600]
+  ];
+  const allPolygons = [polygon1, polygon2];
+
+  // Max fade distance in original scale
+  let maxDistance = 200;
+
+  /**********************************************************
+   * (D) References & pointer coordinates
+   **********************************************************/
+  const mapContainer = document.getElementById("mapContainer");
+  const pointerImage = document.getElementById("pointerImage");
+
+  let pointerX = 300; 
+  let pointerY = 300;
+
+  /**********************************************************
+   * (E) Scaling Helpers
+   **********************************************************/
+  function scalePoint([x, y]) {
+    const currentW = mapContainer.clientWidth;
+    const currentH = mapContainer.clientHeight;
+    const scaleX = currentW / originalWidth;
+    const scaleY = currentH / originalHeight;
+    return [x * scaleX, y * scaleY];
+  }
+  function scalePolygon(poly) {
+    return poly.map(scalePoint);
+  }
+  function getScaledMaxDistance() {
+    // We'll scale distance mostly by width, or you might do a sqrt of both
+    return maxDistance * (mapContainer.clientWidth / originalWidth);
+  }
+
+  /**********************************************************
+   * (F) Polygon & Distance Calculations
+   **********************************************************/
+  function isPointInPolygon(x, y, polygon) {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [xi, yi] = polygon[i];
+      const [xj, yj] = polygon[j];
+      const intersect = ((yi > y) !== (yj > y)) &&
+                        (x < ((xj - xi)*(y - yi)/(yj - yi) + xi));
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+  function distancePointToPolygon(x, y, polygon) {
+    let minDist = Infinity;
+    for (let i=0; i<polygon.length; i++){
+      const p1 = polygon[i];
+      const p2 = polygon[(i+1) % polygon.length];
+      const dist = distancePointToSegment(x, y, p1, p2);
+      if (dist < minDist) minDist = dist;
+    }
+    return minDist;
+  }
+  function distancePointToSegment(x0,y0,p1,p2){
+    const [x1,y1]=p1, [x2,y2]=p2;
+    const A=x0 - x1, B=y0 - y1;
+    const C=x2 - x1, D=y2 - y1;
+    const dot = A*C + B*D;
+    const len_sq = C*C + D*D;
+    let param = -1;
+    if (len_sq !== 0) param = dot / len_sq;
+    if (param<0) param=0; else if (param>1) param=1;
+    const xx = x1 + param*C, yy = y1 + param*D;
+    return Math.sqrt((x0-xx)**2 + (y0-yy)**2);
+  }
+
+  function isPointInAnyPolygon(x, y, polygons) {
+    return polygons.some(poly => isPointInPolygon(x,y, poly));
+  }
+  function distancePointToAllPolygons(x, y, polygons) {
+    let minD = Infinity;
+    polygons.forEach(poly=>{
+      const d = distancePointToPolygon(x, y, poly);
+      if(d<minD) minD=d;
+    });
+    return minD;
+  }
+
+  /**********************************************************
+   * (G) Darkening by brightness
+   **********************************************************/
+  function updateDarkening(x, y) {
+    const scaledMaxDist = getScaledMaxDistance();
+    // If inside any polygon => fully black
+    if (isPointInAnyPolygon(x, y, scaledPolygons)) {
+      mapContainer.style.filter = "brightness(0%)";
+      return;
+    }
+    // else measure distance
+    const dist = distancePointToAllPolygons(x, y, scaledPolygons);
+    if (dist >= scaledMaxDist) {
+      mapContainer.style.filter = "brightness(100%)";
+    } else {
+      const ratio = 1 - (dist / scaledMaxDist);
+      const brightnessVal = 100 - (100 * ratio); 
+      mapContainer.style.filter = `brightness(${brightnessVal}%)`;
+    }
+  }
+
+  /**********************************************************
+   * (H) Pointer Movement + Clamping
+   **********************************************************/
+  function setPointerPosition(newX, newY) {
+    const w = mapContainer.clientWidth;
+    const h = mapContainer.clientHeight;
+    pointerX = Math.max(0, Math.min(newX, w));
+    pointerY = Math.max(0, Math.min(newY, h));
+    pointerImage.style.left = pointerX + "px";
+    pointerImage.style.top  = pointerY + "px";
+    updateDarkening(pointerX, pointerY);
+  }
+
+  /**********************************************************
+   * (I) Handle Mouse + Keyboard
+   **********************************************************/
+  // Mouse
+  mapContainer.addEventListener("mousemove", (e)=>{
+    const rect = mapContainer.getBoundingClientRect();
+    setPointerPosition(e.clientX - rect.left, e.clientY - rect.top);
+  });
+  // Keyboard
+  document.addEventListener("keydown",(e)=>{
+    if (startScreen.style.display!=="none") {
+      // If user still sees start screen, do nothing else
+      return;
+    }
+    const step = mapContainer.clientWidth * 0.005; 
+    let dx=0, dy=0;
+    switch(e.key){
+      case "ArrowUp":    dy=-step; break;
+      case "ArrowDown":  dy= step; break;
+      case "ArrowLeft":  dx=-step; break;
+      case "ArrowRight": dx= step; break;
+      default: return;
+    }
+    setPointerPosition(pointerX+dx, pointerY+dy);
+  });
+
+  /**********************************************************
+   * (J) Resizing Polygons on Window Resize
+   **********************************************************/
+  let scaledPolygons = [];
+  function resizePolygons() {
+    scaledPolygons = [];
+    allPolygons.forEach(originalPoly => {
+      scaledPolygons.push(scalePolygon(originalPoly));
+    });
+  }
+  window.addEventListener("resize", resizePolygons);
+
+  /**********************************************************
+   * (K) Init
+   **********************************************************/
+  // 1) Scale polygons for initial size
+  resizePolygons();
+  // 2) Position pointer (could be anywhere you like)
+  setPointerPosition(pointerX, pointerY);
+</script>
+
+</body>
+</html>
